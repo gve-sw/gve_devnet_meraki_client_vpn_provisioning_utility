@@ -1,0 +1,17 @@
+aiohttp==3.7.4.post0
+async-timeout==3.0.1
+attrs==21.2.0
+certifi==2021.5.30
+chardet==4.0.0
+charset-normalizer==2.0.6
+colorama==0.4.4
+commonmark==0.9.1
+idna==3.2
+meraki==1.12.0
+multidict==5.1.0
+Pygments==2.10.0
+requests==2.26.0
+rich==10.11.0
+typing-extensions==3.10.0.2
+urllib3==1.26.7
+yarl==1.6.3
