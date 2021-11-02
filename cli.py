@@ -39,12 +39,20 @@ logging.basicConfig(level=os.environ.get("LOGLEVEL", "WARN"))
 MERAKI_GREEN = "#67b346"
 console = Console()
 
+##########
+# If this setting is True, this script will only display active Meraki
+# networks that contain an MX appliance. If set to False, script will
+# return ALL networks that the user has access to, regardless of what
+# devices exist in that network.
+FILTER_ONLY_MX_NETWORKS = True
+##########
+
 
 def main():
     """
     This is the primary function of this utility.
 
-    This function manages the flow of the utility & handing off most 
+    This function manages the flow of the utility & handing off most
     processing to sub-functions below for collecting or displaying information.
     """
     # Script start - Print title
@@ -89,22 +97,35 @@ def main():
     # Pull list of networks in the working organization
     with console.status("Retrieving list of Meraki networks...") as status:
         networks = mvpn.getNetworks()
-    
+
     # Prompt user to select which networks to add users
     target_networks = promptSelectNetworks(mvpn, networks)
 
-    # Prompt to add VPN user information.
+    # Prompt for operation (add/remove) & method of information entry
     # If manual input is desired, we'll collect that via input prompts
     # If CSV is desired, we'll ask the user to provide the file name
     choice = promptUserInputMethod()
-    if choice == "MANUAL":
-        userList = promptManualUserInput()
-    elif choice == "CSV":
-        userList = promptUploadCSV()
+    if choice == "ADD-MANUAL":
+        operation = "ADD"
+        userList = promptManualUserInput(operation)
+    elif choice == "ADD-CSV":
+        operation = "ADD"
+        userList = promptUploadCSV(operation)
+    elif choice == "DEACTIVATE-MANUAL":
+        operation = "DEACTIVATE"
+        userList = promptManualUserInput(operation)
+    elif choice == "DEACTIVATE-CSV":
+        operation = "DEACTIVATE"
+        userList = promptUploadCSV(operation)
 
-    # Use the list of VPN user info to create new Meraki Auth users
-    # with authorization for Client VPN
-    finalStatus = createUsers(mvpn, userList, target_networks)
+    if operation == "DEACTIVATE":
+        # Use list of VPN user email addresses to locate user ID
+        # Then use that ID to deactivate each user.
+        finalStatus = deactivateUsers(mvpn, userList, target_networks)
+    elif operation == "ADD":
+        # Use the list of VPN user info to create new Meraki Auth users
+        # with authorization for Client VPN
+        finalStatus = createUsers(mvpn, userList, target_networks)
 
     # Check results & print out brief summary of how many success/failures
     successful = 0
@@ -140,7 +161,7 @@ def promptMerakiAPIKey():
         console.print(
             "In order to get started, please enter your "
             + f"[{MERAKI_GREEN}]Cisco Meraki[/{MERAKI_GREEN}] API key below:"
-        ) 
+        )
         key = Prompt.ask("\n[bold]API Key").strip()
         # Check to make sure key is not empty
         if len(key) == 0:
@@ -154,15 +175,15 @@ def promptMerakiAPIKey():
 
 def promptSelectOrg(orgs):
     """
-    Process list of organization IDs. If multiple IDs were returned, 
+    Process list of organization IDs. If multiple IDs were returned,
     display them & prompt user to select which one to work with.
     If only one Org ID is found, then just return that Org ID.
 
     Parameters:
     orgs - List of Meraki organization IDs that API key has access to
 
-    Returns: 
-    org_id - Single Organization ID that user chose to work with 
+    Returns:
+    org_id - Single Organization ID that user chose to work with
     """
     org_id = None
     # If user only has access to one org, no reason to ask which one to use.
@@ -223,17 +244,23 @@ def promptSelectNetworks(mvpn, networkList):
     grid.add_column()
     grid.add_column()
 
-    # Retrieve Organization-wide device list
-    # Note: Pulling Org-wide device list is much more efficient than querying 
-    #       each network for a list of devices
-    deviceList = mvpn.getOrgDevices()
+    if FILTER_ONLY_MX_NETWORKS == True:
+        # Retrieve Organization-wide device list
+        # Note: Pulling Org-wide device list is much more efficient than querying
+        #       each network for a list of devices
+        deviceList = mvpn.getOrgDevices()
 
-    # Check each device in the list. If device is an MX, store the network ID
-    mxList = [device["networkId"] for device in deviceList if "MX" in device["model"]]
+        # Check each device in the list. If device is an MX, store the network ID
+        mxList = [
+            device["networkId"] for device in deviceList if "MX" in device["model"]
+        ]
 
-    # Match network IDs of known MXs to full list of all networks. Only keep 
-    # networks that contain an MX
-    networks = [network for network in networkList if network["id"] in mxList]
+        # Match network IDs of known MXs to full list of all networks. Only keep
+        # networks that contain an MX
+        networks = [network for network in networkList if network["id"] in mxList]
+    else:
+        # Return ALL networks, regardless of if MX is attached
+        networks = networkList
 
     # Grid will have 4 columns. Calculate number of items to figure out how many rows we need
     total = len(networks)
@@ -244,7 +271,7 @@ def promptSelectNetworks(mvpn, networkList):
     # Sort list of networks by network name
     networks.sort(key=lambda x: x["name"])
 
-    # In order to display networks in each column by descending order, 
+    # In order to display networks in each column by descending order,
     # we'll need to build each column here & fill depending on how many
     # total rows we expect.
     # Example: Column 1 = networks 1-20, Column 2 = networks 21-40, etc
@@ -358,19 +385,25 @@ def promptUserInputMethod():
     while True:
         # Print options
         console.print("\nHow would you like to input user info?")
-        console.print("\n1. Input manually via CLI")
-        console.print("2. Upload local CSV file")
+        console.print("\n1. [white]Add User(s) - Input manually via CLI")
+        console.print("2. [white]Add User(s) - Upload local CSV file")
+        console.print("3. [white]Deactivate User(s) - Input manually via CLI")
+        console.print("4. [white]Deactivate User(s) - Upload local CSV file")
         input = IntPrompt.ask("\n[bold]Enter Selection")
         # Process selection
         if input == 1:
-            return "MANUAL"
+            return "ADD-MANUAL"
         if input == 2:
-            return "CSV"
+            return "ADD-CSV"
+        if input == 3:
+            return "DEACTIVATE-MANUAL"
+        if input == 4:
+            return "DEACTIVATE-CSV"
         else:
             console.print("\n[yellow]Sorry, that wasn't an option. Please try again.")
 
 
-def promptManualUserInput():
+def promptManualUserInput(operation):
     """
     If user selected to input VPN user information manually,
     then we'll prompt to input name, email address, and password.
@@ -383,20 +416,25 @@ def promptManualUserInput():
     userList - List containing nested dicts of user information
     """
     userList = []
-    # Begin loop to enter user info - continue looping until 
+    # Begin loop to enter user info - continue looping until
     # done entering user info
     while True:
         # Prompt for name, email address, and password
         # Note: Password can be left blank & we'll just auto-generate one
         console.print("\nPlease provide the following details:\n")
-        username = Prompt.ask("[bold]Name")
-        email = Prompt.ask("[bold]Email")
-        password = Prompt.ask(
-            "[bold]Password (leave blank for auto-generate)",
-            password=True,
-            default=None,
-        )
-        # Prompt to confirm that informtion is correct. 
+        if operation == "DEACTIVATE":
+            email = Prompt.ask("[bold]Email")
+            username = None
+            password = None
+        else:
+            username = Prompt.ask("[bold]Name")
+            email = Prompt.ask("[bold]Email")
+            password = Prompt.ask(
+                "[bold]Password (leave blank for auto-generate)",
+                password=True,
+                default=None,
+            )
+        # Prompt to confirm that informtion is correct.
         # If correct, add user to userList. Otherwise drop the info & restart the prompts
         if not Confirm.ask("\nIs the information correct?", default=True):
             continue
@@ -416,7 +454,7 @@ def promptManualUserInput():
             return userList
 
 
-def promptUploadCSV():
+def promptUploadCSV(operation):
     """
     If user selected to input VPN user via CSV upload,
     then we'll provide the CSV format & ask for a file name.
@@ -435,14 +473,28 @@ def promptUploadCSV():
         # CSV file format must be:  user name, email address, password
         # Note: Password can be left blank & we'll just auto-generate one
         # Note: CSV file MUST be in same directory as this utility.
-        console.print(
-            "\nNew VPN users can be bulk created via CSV using the following format:"
-        )
-        console.print("user name, email address, password")
-        console.print(
-            "Note: Password field may be left blank for an auto-generated password."
-        )
-        console.print("\nPlease place the CSV in the same directory as this script.")
+        #
+        # For deactivating users, format is just: email address
+        if operation == "DEACTIVATE":
+            console.print(
+                "\nExisting VPN users can be bulk deactivated via CSV using the following format:"
+            )
+            console.print("email address")
+
+            console.print(
+                "\nPlease place the CSV in the same directory as this script."
+            )
+        else:
+            console.print(
+                "\nNew VPN users can be bulk created via CSV using the following format:"
+            )
+            console.print("user name, email address, password")
+            console.print(
+                "Note: Password field may be left blank for an auto-generated password."
+            )
+            console.print(
+                "\nPlease place the CSV in the same directory as this script."
+            )
 
         # Ask for file name
         csv_users = Prompt.ask("[bold]File Name")
@@ -454,10 +506,16 @@ def promptUploadCSV():
                 for line in csv_reader:
                     # Only process if line is not emtpy
                     if any(item.strip() for item in line):
-                        user_info = {
-                            "username": line[0].strip(),
-                            "email": line[1].strip(),
-                        }
+                        if operation == "DEACTIVATE":
+                            user_info = {
+                                "username": None,
+                                "email": line[0].strip(),
+                            }
+                        else:
+                            user_info = {
+                                "username": line[0].strip(),
+                                "email": line[1].strip(),
+                            }
                         # Check if CSV row contains a password or not
                         try:
                             user_info["password"] = line[2].strip()
@@ -478,7 +536,7 @@ def promptUploadCSV():
 
         # Check count of users to add, confirm before creating
         count = len(userList)
-        console.print(f"\nCSV Processed & contains {count} new Client VPN users")
+        console.print(f"\nCSV Processed & contains {count} Client VPN users")
         if not Confirm.ask("Proceed?", default=True):
             continue
         return userList
@@ -503,7 +561,7 @@ def generatePassword():
 def createUsers(mvpn, userList, target_networks):
     """
     Take in list of users to create & networks to add users to.
-    Create job to add each user to the appropriate networks, and 
+    Create job to add each user to the appropriate networks, and
     display progress & errors
 
     Parameters:
@@ -577,11 +635,106 @@ def createUsers(mvpn, userList, target_networks):
     return finalStatus
 
 
+def deactivateUsers(mvpn, userList, target_networks):
+    """
+    Take in list of user email addresses that need to be deactivated
+    Create job to locate each user ID & removal process, and
+    display progress & errors
+
+    Parameters:
+    mvpn - Instance of Meraki helper class, required to execute user creation
+    userList - List containing nested dict of user info (name, email, password)
+    target_networks - List of network names/IDs where VPN users will be removed
+
+    Returns:
+    finalStatus - List containing log info for each user, including success/failure & any errors
+    """
+    finalStatus = []
+    with Progress() as progress:
+        # Add progress bar for overall job status - which will update every time we complete
+        # removing each user
+        console.print("\n[blue]Starting Job...")
+        overall_progress = progress.add_task(
+            "Overall Progress:", total=len(target_networks), transient=True
+        )
+        counter = 1
+        # Each user ID is unique - but persistent between networks.
+        # So we only need to find the user ID from one network
+        for user in userList:
+            # Print progress display, showing how many tasks remain
+            email = user["email"]
+            progress.console.print(
+                f"[bold reverse]Task {str(counter)} of {str(len(userList))}. User: {email}"
+            )
+            # Create progress bar for current network, with display name being the network name
+            user_progress = progress.add_task(
+                f"{email}", total=len(target_networks), transient=True
+            )
+            # Iterate through list of networks, and query for user ID
+            user_id = None
+            while user_id == None:
+                # Query each network for list of users
+                # If we don't find target user, check next network
+                # Once we have user ID, continue
+                for network in target_networks:
+                    net_id = target_networks[network]
+                    user_id = mvpn.getMerakiAuthUsers(net_id, email)
+                    if user_id == None:
+                        continue
+                    else:
+                        break
+                # If User ID is never found:
+                if user_id == None:
+                    break
+
+            # Skip trying to deactivate if user not found
+            if user_id == None:
+                progress.console.print(
+                        f"{network} - Status: [red]User not found!"
+                    )
+                status = {"username": email,
+                          "network": "ALL",
+                          "password": "",
+                          "success": False,
+                          "error": "User not found"}
+                finalStatus.append(status)
+                continue
+            # Send request to deactivate user
+            for network in target_networks:
+                net_id = target_networks[network]
+                status = mvpn.deactivateUser(net_id, user_id)
+                status["username"] = email
+                status["password"] = ""
+                status["network"] = network
+                finalStatus.append(status)
+                # Update progress display to show status for each user
+                if status["success"] == True:
+                    progress.console.print(
+                        f"{status['network']} - Status: [green]Success!"
+                    )
+                else:
+                    # If any error, print failed & we'll display the error in the final status log
+                    progress.console.print(
+                        f"{status['network']} - Status: [red]Failed (See final status for error)"
+                    )
+                # Update network progress bar
+                progress.update(user_progress, advance=1)
+            # Update progress display when single network is done processing
+            progress.console.print(f"[cyan]Finished {network}!")
+            counter += 1
+            # Update overall progress bar
+            progress.update(overall_progress, advance=1)
+        # Update progress display to notify that ALL processing has been completed
+        progress.console.print(f"[green]All tasks completed!")
+    # Return list of ALL users and their status
+    return finalStatus
+
+
 def printFinalStatus(finalStatus):
     """
     Optional, detailed log of all operations that were performed using this utility.
-    This function will create a table that lists every create operation by network & user, 
-    and show sucess/failure & any error message. Also will display all user passwords, 
+    This function will create a table that lists every create operation by network & user,
+    and show sucess/failure & any error message. Also will display all user passwords,
     which may be helpful if script auto-generated a password that needs to be provided to
     the user.
 
@@ -603,7 +756,10 @@ def printFinalStatus(finalStatus):
     for entry in finalStatus:
         # Check what error, if any, so we can add color to status field
         if not entry["error"] == "":
-            parsed_error = entry["error"].message["errors"][0]
+            try:
+                parsed_error = entry["error"].message["errors"][0]
+            except AttributeError:
+                parsed_error = entry["error"]
         else:
             parsed_error = ""
         if entry["success"] == True:

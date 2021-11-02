@@ -17,6 +17,8 @@ import logging
 import os
 
 import meraki
+from meraki.exceptions import APIError
+
 
 MERAKI_GREEN = "#67b346"
 SUPPRESS_MERAKI_LOGGING = True
@@ -48,7 +50,7 @@ class MerakiVPN:
         password - Client VPN password for this user
         appliance - VPN appliance name, format: "<network name> - appliance"
 
-        Returns dictionary of values indicating success or failure of operation, 
+        Returns dictionary of values indicating success or failure of operation,
         and includes error message if necessary
         """
         # Set required parameters
@@ -122,6 +124,32 @@ class MerakiVPN:
         Get List of ALL organization devices
         """
         deviceList = self.dashboard.organizations.getOrganizationDevices(
-            self.workingOrgID
+            self.workingOrgID, productTypes=["appliance"]
         )
         return deviceList
+
+    def getMerakiAuthUsers(self, network_id, email_address):
+        """
+        Query for Meraki Auth user by network & user email address
+        Return Meraki user ID
+        """
+        userList = self.dashboard.networks.getNetworkMerakiAuthUsers(network_id)
+        if len(userList) == 0:
+            log.info("Found no Meraki Auth users")
+            return None
+        else:
+            for user in userList:
+                if user["email"] == email_address:
+                    return user["id"]
+
+    def deactivateUser(self, network_id, user_id):
+        """
+        Deactivate a single Meraki Auth user by user ID
+        """
+        try:
+            self.dashboard.networks.deleteNetworkMerakiAuthUser(network_id, user_id)
+            success = {"success": True, "error": ""}
+            return success
+        except APIError as error:
+            failure = {"success": False, "error": error}
+            return failure
